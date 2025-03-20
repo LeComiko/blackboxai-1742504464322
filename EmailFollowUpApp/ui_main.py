@@ -226,28 +226,78 @@ class MainWindow(QMainWindow):
 
     def setup_tray(self):
         """Set up system tray icon and menu"""
+        # Créer l'icône de la barre des tâches
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(self.style().standardIcon(self.style().SP_ComputerIcon))
+        self.tray_icon.setToolTip("EmailFollowUpApp - Suivi des emails")
         
-        # Create tray menu
+        # Connecter le double-clic sur l'icône
+        self.tray_icon.activated.connect(self.on_tray_icon_activated)
+        
+        # Créer le menu contextuel
         tray_menu = QMenu()
         
-        show_action = QAction("Afficher", self)
-        show_action.triggered.connect(self.show)
+        # Action pour afficher/cacher la fenêtre
+        self.show_action = QAction("Afficher", self)
+        self.show_action.triggered.connect(self.show_hide_window)
         
-        hide_action = QAction("Réduire", self)
-        hide_action.triggered.connect(self.hide)
+        # Actions pour le contrôle de l'application
+        start_scheduler_action = QAction("Démarrer le suivi", self)
+        start_scheduler_action.triggered.connect(self.scheduler.start)
+        
+        stop_scheduler_action = QAction("Arrêter le suivi", self)
+        stop_scheduler_action.triggered.connect(self.scheduler.stop)
+        
+        force_check_action = QAction("Vérifier maintenant", self)
+        force_check_action.triggered.connect(self.scheduler.force_check)
+        
+        settings_action = QAction("Paramètres", self)
+        settings_action.triggered.connect(self.show_settings)
         
         quit_action = QAction("Quitter", self)
         quit_action.triggered.connect(self.close_application)
         
-        tray_menu.addAction(show_action)
-        tray_menu.addAction(hide_action)
+        # Ajouter les actions au menu
+        tray_menu.addAction(self.show_action)
+        tray_menu.addSeparator()
+        tray_menu.addAction(start_scheduler_action)
+        tray_menu.addAction(stop_scheduler_action)
+        tray_menu.addAction(force_check_action)
+        tray_menu.addSeparator()
+        tray_menu.addAction(settings_action)
         tray_menu.addSeparator()
         tray_menu.addAction(quit_action)
         
+        # Définir le menu contextuel
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.show()
+
+    def show_hide_window(self):
+        """Afficher ou cacher la fenêtre principale"""
+        if self.isVisible():
+            self.hide()
+            self.show_action.setText("Afficher")
+        else:
+            self.show()
+            self.show_action.setText("Réduire")
+            self.activateWindow()
+
+    def on_tray_icon_activated(self, reason):
+        """Gérer l'activation de l'icône de la barre des tâches"""
+        if reason == QSystemTrayIcon.DoubleClick:
+            self.show_hide_window()
+        elif reason == QSystemTrayIcon.Trigger:
+            # Clic simple : afficher un message avec le statut
+            status = "actif" if self.scheduler.is_active() else "inactif"
+            self.show_tray_message(
+                "État du suivi",
+                f"Le suivi des emails est {status}",
+                QSystemTrayIcon.Information
+            )
+
+    def show_tray_message(self, title: str, message: str, icon=QSystemTrayIcon.Information):
+        """Afficher une notification dans la barre des tâches"""
+        self.tray_icon.showMessage(title, message, icon, 3000)
 
     def setup_connections(self):
         """Set up signal connections"""
@@ -418,33 +468,70 @@ class MainWindow(QMainWindow):
         self.status_label.setText("État: Vérification en cours...")
         self.progress_bar.setRange(0, 0)
         self.progress_bar.show()
+        
+        # Notification dans la barre des tâches
+        self.show_tray_message(
+            "Vérification en cours",
+            "Recherche de nouvelles réponses...",
+            QSystemTrayIcon.Information
+        )
 
     @pyqtSlot(bool)
     def on_check_completed(self, success: bool):
         """Handle check completed signal"""
         self.progress_bar.hide()
-        self.status_label.setText(
-            "État: Actif" if success else "État: Erreur lors de la vérification"
-        )
+        status = "État: Actif" if success else "État: Erreur lors de la vérification"
+        self.status_label.setText(status)
         self.refresh_followups()
+        
+        if not success:
+            # Notification d'erreur
+            self.show_tray_message(
+                "Erreur de vérification",
+                "Une erreur est survenue lors de la vérification des emails",
+                QSystemTrayIcon.Warning
+            )
 
     @pyqtSlot(int)
     def on_followup_sent(self, followup_id: int):
         """Handle followup sent signal"""
-        self.statusBar().showMessage(f"Relance envoyée pour le suivi #{followup_id}", 3000)
+        message = f"Relance envoyée pour le suivi #{followup_id}"
+        self.statusBar().showMessage(message, 3000)
         self.refresh_followups()
+        
+        # Notification de relance envoyée
+        self.show_tray_message(
+            "Relance envoyée",
+            message,
+            QSystemTrayIcon.Information
+        )
 
     @pyqtSlot(int)
     def on_response_detected(self, followup_id: int):
         """Handle response detected signal"""
-        self.statusBar().showMessage(f"Réponse détectée pour le suivi #{followup_id}", 3000)
+        message = f"Réponse détectée pour le suivi #{followup_id}"
+        self.statusBar().showMessage(message, 3000)
         self.refresh_followups()
+        
+        # Notification de réponse détectée
+        self.show_tray_message(
+            "Nouvelle réponse",
+            message,
+            QSystemTrayIcon.Information
+        )
 
     @pyqtSlot(str)
     def on_error(self, error_msg: str):
         """Handle error signal"""
         self.status_label.setText("État: Erreur")
         QMessageBox.warning(self, "Erreur", error_msg)
+        
+        # Notification d'erreur
+        self.show_tray_message(
+            "Erreur",
+            error_msg,
+            QSystemTrayIcon.Critical
+        )
 
     def closeEvent(self, event):
         """Handle application close event"""
